@@ -813,13 +813,13 @@ def build_config(
         secrets=load_secrets(env_file=tmp_path / "absent.env"),
         app=AppSettings(),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
-        flow=FlowConfig.from_dict(
+        service_centers=[CENTER_3242],
+        _selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
+        _flow=FlowConfig.from_dict(
             yaml.safe_load(
                 flow_yaml(key_provider, authentication_timeout_ms, file_selection)
             )
         ),
-        service_centers=[CENTER_3242],
     )
 
 

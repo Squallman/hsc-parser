@@ -43,6 +43,9 @@ hsc-parser = "hsc_queue_monitor.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hsc_queue_monitor"]
+include = [
+    { path = "config/*.yaml", from = "." },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
