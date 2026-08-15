@@ -51,7 +51,6 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["legacy"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
@@ -70,7 +69,6 @@ python_version = "3.12"
 strict = true
 warn_unused_ignores = false
 disallow_untyped_decorators = false
-exclude = ["legacy/"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

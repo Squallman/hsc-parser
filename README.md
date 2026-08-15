@@ -797,7 +797,6 @@ src/hsc_queue_monitor/
 tests/
 scripts/         macOS Accessibility helpers for the native file dialog
 data/            browser profile, debug artifacts, state (all gitignored)
-legacy/          previous API-based prototype, kept for reference
 ```
 
 The two Telegram packages are not a duplication to tidy away: `notifications/`
@@ -819,8 +818,3 @@ suite makes no network request of any kind.
 
 ---
 
-## `legacy/`
-
-An earlier prototype that called the site's JSON API directly. It is kept only
-for reference, is excluded from linting and type checking, and is not importable
-as part of this package.
