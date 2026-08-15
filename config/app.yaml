@@ -1,0 +1,74 @@
+# Every non-sensitive operational setting, in one version-controlled place.
+#
+# Nothing here is a credential. That is the rule this file exists to make
+# obvious: a timeout, a retry count or a collection name should be reviewable in
+# a diff, while the six values that could sign in as you, read your database or
+# speak as your bot come from the environment and nowhere else.
+#
+# Secrets (.env locally, `production` GitHub Environment secrets in CI):
+#
+#   IDGOV_SIGNING_KEY_PATH  IDGOV_SIGNING_KEY_PASSWORD                 local authentication only
+#   HSC_MONGODB_URI  HSC_SESSION_ENCRYPTION_KEY    persistence
+#   TELEGRAM_BOT_TOKEN  TELEGRAM_USERS             notifications
+#
+# Writing any of those into this file is refused at load time, not ignored.
+
+mongodb:
+  # Names, never credentials. The URI is a secret and lives in the environment.
+  # All three documents — the encrypted session, the monitor state and the
+  # availability snapshot — share one collection and differ by `_id`.
+  database: hsc_queue_monitor
+  session_collection: sessions
+
+api:
+  # Seconds between the START of one `monitor-once`/`api-monitor` scan and the
+  # next. 300s against the measured 900s queue-session lifetime: the scans
+  # themselves keep the session alive, which is why there is no keepalive.
+  monitor_interval_seconds: 300.0
+
+  # How long ONE API read may take. There is no retry hiding behind these — the
+  # retry policy below is the only one — so the read budget is raised when HSC
+  # is measured to be slower, rather than being asked twice.
+  #
+  # Measured: /slots timed out at a 30s read budget on an endpoint that had
+  # answered in earlier runs.
+  connect_timeout_seconds: 5.0
+  read_timeout_seconds: 60.0
+
+  # Minimum seconds between the /slots requests for two DIFFERENT dates.
+  # Measured: HSC answered 429 to two such requests one second apart. This is
+  # pacing, not backoff — every date is still requested exactly once.
+  slot_request_interval_seconds: 3.0
+
+  # The one retry policy in the project. A transient answer — 429, 500, 502,
+  # 503, 504 — or no answer at all is asked again, waiting a widening amount in
+  # between. A 401, a 403 or a body that is not the JSON it claimed to be is an
+  # ANSWER and is never retried.
+  #
+  # With these values: attempt, 2s, attempt, 4s, attempt. No fourth.
+  retry:
+    max_attempts: 3
+    initial_backoff_seconds: 2.0
+    max_backoff_seconds: 15.0
+    multiplier: 2.0
+    # However long a 429 asks us to wait, a scheduled run may not sit on it
+    # forever: the next run is five minutes away and will try again anyway.
+    max_retry_after_seconds: 60.0
+
+telegram:
+  # Whether to notify at all. WHO to notify is TELEGRAM_USERS — a secret, and
+  # deliberately not in this file: those are personal identifiers.
+  enabled: true
+
+browser:
+  # A visible window is the default: the ID.GOV.UA journey shows challenges a
+  # person has to answer, and one nobody can see is a run nobody can finish.
+  # `--headed` / `--headless` overrides this for a single run.
+  headless: false
+
+browser_monitor:
+  # The older, local-only `monitor` command that drives the wizard by clicking.
+  # The headless path uses api.monitor_interval_seconds instead.
+  poll_interval_seconds: 60
+  poll_jitter_seconds: 10
+  notify_cooldown_seconds: 21600

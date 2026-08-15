@@ -1,0 +1,148 @@
+# Service centres, addressed by their visible service centre ID.
+#
+# Generated/updated by:
+#   python -m hsc_queue_monitor.cli init-config
+#
+# `id` is the identity: it is what the site shows, what the search box is given
+# and what every scan matches on. The internal HSC department id is deliberately
+# NOT stored — it has been observed to change between runs, and it is resolved
+# from /api/v2/equeue/departments on every scan.
+#
+# `enabled: true` selects a centre for monitoring. Discovery adds new centres
+# disabled: HSC returns service centres across the whole country, and scanning
+# all of them is not what this project is for.
+
+service_centers:
+  - id: "0541"
+    name: "ТСЦ МВС № 0541"
+    enabled: false
+  - id: "0741"
+    name: "ТСЦ МВС № 0741"
+    enabled: false
+  - id: "0742"
+    name: "ТСЦ МВС № 0742"
+    enabled: false
+  - id: "1242"
+    name: "ТСЦ МВС № 1242"
+    enabled: false
+  - id: "1245"
+    name: "ТСЦ МВС № 1245"
+    enabled: false
+  - id: "1247"
+    name: "ТСЦ МВС № 1247"
+    enabled: false
+  - id: "1248"
+    name: "ТСЦ МВС № 1248"
+    enabled: false
+  - id: "1249"
+    name: "ТСЦ МВС № 1249"
+    enabled: false
+  - id: "1841"
+    name: "ТСЦ МВС № 1841"
+    enabled: false
+  - id: "1843"
+    name: "ТСЦ МВС № 1843"
+    enabled: false
+  - id: "2141"
+    name: "ТСЦ МВС № 2141"
+    enabled: false
+  - id: "2641"
+    name: "ТСЦ МВС № 2641"
+    enabled: false
+  - id: "2643"
+    name: "ТСЦ МВС № 2643"
+    enabled: false
+  - id: "3242"
+    name: "ТСЦ МВС № 3242"
+    full_name: "ТСЦ МВС № 3242 м. Біла Церква, вул. Сухоярська 20"
+    enabled: true
+  - id: "3243"
+    name: "ТСЦ МВС № 3243"
+    enabled: false
+  - id: "3246"
+    name: "ТСЦ МВС № 3246"
+    enabled: false
+  - id: "3247"
+    name: "ТСЦ МВС № 3247 "
+    enabled: false
+  - id: "3248"
+    name: "ТСЦ МВС № 3248 "
+    enabled: false
+  - id: "3541"
+    name: "ТСЦ МВС № 3541"
+    enabled: false
+  - id: "3542"
+    name: "ТСЦ МВС № 3542"
+    enabled: false
+  - id: "4641"
+    name: "ТСЦ МВС № 4641"
+    enabled: false
+  - id: "4651"
+    name: "ТСЦ МВС № 4651"
+    enabled: false
+  - id: "4841"
+    name: "ТСЦ МВС № 4841 "
+    enabled: false
+  - id: "4842"
+    name: "ТСЦ МВС № 4842"
+    enabled: false
+  - id: "5341"
+    name: "ТСЦ МВС № 5341"
+    enabled: false
+  - id: "5343"
+    name: "ТСЦ МВС № 5343"
+    enabled: false
+  - id: "5641"
+    name: "ТСЦ МВС № 5641"
+    enabled: false
+  - id: "5643"
+    name: "ТСЦ МВС № 5643"
+    enabled: false
+  - id: "5942"
+    name: "ТСЦ МВС № 5942  вул Вирівська, 19 А (лише практичний іспит)"
+    enabled: false
+  - id: "5943"
+    name: "ТСЦ МВС № 5943"
+    enabled: false
+  - id: "5946"
+    name: "ТСЦ МВС № 5946"
+    enabled: false
+  - id: "6141"
+    name: "ТСЦ МВС № 6141"
+    enabled: false
+  - id: "6143"
+    name: "ТСЦ МВС № 6143"
+    enabled: false
+  - id: "6145"
+    name: "ТСЦ МВС № 6145"
+    enabled: false
+  - id: "6341"
+    name: "ТСЦ МВС № 6341"
+    enabled: false
+  - id: "6342"
+    name: "ТСЦ МВС № 6342"
+    enabled: false
+  - id: "6841"
+    name: "ТСЦ МВС № 6841"
+    enabled: false
+  - id: "6843"
+    name: "ТСЦ МВС № 6843"
+    enabled: false
+  - id: "7141"
+    name: "ТСЦ МВС № 7141"
+    enabled: false
+  - id: "7341"
+    name: "ТСЦ МВС № 7341"
+    enabled: false
+  - id: "7345"
+    name: "ТСЦ МВС № 7345"
+    enabled: false
+  - id: "7441"
+    name: "ТСЦ МВС № 7441"
+    enabled: false
+  - id: "7442"
+    name: "ТСЦ МВС № 7442"
+    enabled: false
+  - id: "8049"
+    name: "ТСЦ МВС № 8049"
+    enabled: false

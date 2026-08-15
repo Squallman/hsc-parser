@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hsc-parser"
+version = "0.2.0"
+description = "Headless HSC eQueue availability monitor with local authentication bootstrap, persisted state and Telegram notifications."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "playwright>=1.44",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    # Used only by the read-only `api-probe` diagnostic, which replays the
+    # browser's session against the HSC JSON API. Nothing in the monitor, the
+    # queue flow or the booking flow makes HTTP requests of its own.
+    "requests>=2.32",
+    # `api-monitor` persistence only: the HTTP session is stored in MongoDB,
+    # sealed with Fernet. Nothing else in the project touches either.
+    "pymongo>=4.6",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML>=6.0",
+]
+# Only `scripts/mac_ax_inspector.py --pid` needs this: addressing one exact
+# process through the native Accessibility API. Nothing in src/ imports it, and
+# the inspector's other modes work without it.
+macos-debug = [
+    "pyobjc-framework-ApplicationServices>=10.0",
+]
+
+[project.scripts]
+hsc-parser = "hsc_queue_monitor.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hsc_queue_monitor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = [
+    "B008",
+    # `timeout` parameters mirror Playwright's own API (milliseconds), which is
+    # what callers already expect; asyncio.timeout is not a substitute.
+    "ASYNC109",
+    # ASYNC240 targets trio/anyio. Config files are read once at startup, so
+    # blocking pathlib calls are not a problem here.
+    "ASYNC240",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = false
+disallow_untyped_decorators = false
+exclude = ["legacy/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# PyObjC ships no type information. Used only by the macOS Accessibility
+# adapter, which is one small module behind a typed protocol.
+[[tool.mypy.overrides]]
+module = ["ApplicationServices", "AppKit"]
+ignore_missing_imports = true

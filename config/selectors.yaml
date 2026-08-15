@@ -1,0 +1,408 @@
+# HSC UI selectors.
+#
+# Every site-specific selector lives here — never in Python code.
+#
+# A selector entry supports these keys:
+#   strategy:  role | text | label | placeholder | css | test_id   (required)
+#   value:     the css selector / text / label / placeholder / test id
+#   role:      ARIA role, only for strategy: role
+#   name:      accessible name, only for strategy: role
+#   exact:     true|false   — exact text match (text/role/label strategies)
+#   nth:       integer      — ONLY set this to deliberately disambiguate a
+#                             selector that legitimately matches several nodes.
+#                             Without it, an ambiguous match is a hard error.
+#   timeout:   milliseconds — overrides the default wait
+#   visible:   true|false   — only consider visible nodes (default: true)
+#   optional:  true|false   — the flow may proceed if this is not configured
+#
+# Sentinel values:
+#   TODO     — not yet determined. Resolving it raises SelectorNotConfigured.
+#   DYNAMIC  — the value is supplied at runtime (e.g. a service centre name).
+#
+# Discover real values with:
+#   python -m hsc_queue_monitor.cli inspect        (screens inside the cabinet)
+#   python -m hsc_queue_monitor.cli inspect-auth   (the login / ID.GOV.UA screens)
+# then validate each one with:
+#   python -m hsc_queue_monitor.cli test-step login.password
+
+# The authentication journey, in the order it is executed:
+#
+#   HSC (signed out)  ->  terms  ->  idgov
+#   ID.GOV.UA         ->  electronic_signature -> file_tab -> provider
+#                     ->  key_file -> password -> submit
+#   HSC callback      ->  /cabinet -> authenticated_marker
+#
+# Every entry below belongs to exactly one of those screens. The MasterKey
+# upload / password / submit trio is shared with the manual `login` flow — it is
+# the same three controls on the same ID.GOV.UA screen, so it is defined once.
+login:
+  # --- HSC, signed out ---------------------------------------------------
+  #
+  # "Я ознайомлений та погоджуюсь з умовами надання послуги". Confirmed from a
+  # real element dump of https://eqn.hsc.gov.ua/ — the checkbox itself is a
+  # custom control that never shows up as an <input>, so the label is the only
+  # thing there is to click. Clicking it is what enables the id.gov.ua button.
+  terms:
+    strategy: text
+    value: "Я ознайомлений та погоджуюсь з умовами надання послуги"
+    exact: true
+
+  # The id.gov.ua button. Its inner text is polluted by an inline <style> from
+  # the embedded SVG logo (".cls-1id.gov.ua" in the element dump), so this is
+  # deliberately a substring match: it matches whether or not the browser's
+  # accessible-name computation strips the stylesheet text.
+  idgov:
+    strategy: role
+    role: button
+    name: "id.gov.ua"
+    exact: false
+
+  # --- ID.GOV.UA, authentication method ----------------------------------
+  #
+  # "Електронного підпису" — the qualified-signature method. Substring match:
+  # the visible label is often a longer sentence around this phrase.
+  electronic_signature:
+    strategy: text
+    value: "Електронного підпису"
+    exact: false
+
+  # --- ID.GOV.UA, key medium ---------------------------------------------
+  #
+  # "Файловий" — the file-based key, as opposed to a hardware token.
+  file_tab:
+    strategy: role
+    role: tab
+    name: "Файловий"
+    exact: true
+
+  # --- ID.GOV.UA, key provider -------------------------------------------
+  #
+  # The КНЕДП (electronic trust service provider) dropdown — a real <select>,
+  # confirmed on the live page. It defaults to «КНЕДП ДПС», so the provider that
+  # issued the key has to be chosen before the .dat is uploaded.
+  #
+  # Which provider to choose is a value, not a selector: it lives in
+  # config/flow.yaml under authentication.key_provider. This entry only says
+  # where the dropdown is; LoginPage picks the option by its visible label with
+  # select_option() and never clicks the list open.
+  provider:
+    strategy: css
+    value: '#CAsServersSelect'
+
+  # --- ID.GOV.UA, key + password -----------------------------------------
+  #
+  # The visible "choose a file" control — the words a person actually clicks:
+  #
+  #   "Перетягніть сюди файл ключа або оберіть його на своєму носієві"
+  #
+  # This is the production upload path. Proven by A/B test: writing the file
+  # straight into the input below leaves ID.GOV.UA unable to use the key (it
+  # reads it, then resets the form), while activating this control and
+  # answering the resulting file chooser succeeds. Whatever lifecycle the page
+  # hangs off its own upload widget, only the real click produces it.
+  #
+  # Matched by its confirmed visible text rather than the generated CSS
+  # classes around it, which are the site's to churn.
+  key_file_trigger:
+    strategy: text
+    value: "оберіть його на своєму носієві"
+    exact: true
+
+  # The underlying input. NOT the production upload mechanism any more — it is
+  # kept as the identity of the input the file chooser must belong to, and as a
+  # handle for `test-step` / diagnostics.
+  #
+  # The screen has TWO file inputs — #PKeyFileInput (the private key) and
+  # #ChoosePKCertsInput (certificates) — so `input[type="file"]` is ambiguous
+  # and an `nth:` would only paper over it. The ID is the one thing that says
+  # which of the two is meant, and it is what the chooser is checked against
+  # before a single byte is handed over.
+  key_file:
+    strategy: css
+    value: '#PKeyFileInput'
+    visible: false
+
+  # Proof that ID.GOV.UA has actually *accepted* the uploaded .dat, as opposed
+  # to Playwright having handed the file to the input. The file-key UI only
+  # offers "Завантажити інший файл" once a key is loaded, so its appearance is
+  # the transition to wait for before the password is typed.
+  #
+  # Deliberately not the filename ("Файл ключа: Key-6.dat"): the file is
+  # IDGOV_SIGNING_KEY_PATH's business and its name is free to change.
+  key_loaded:
+    strategy: text
+    value: "Завантажити інший файл"
+    exact: true
+
+  # --- ID.GOV.UA, reading the key ----------------------------------------
+  #
+  # The dimmer that covers the form while ID.GOV.UA reads the private key.
+  # Confirmed from the live DOM.
+  #
+  # This is load-bearing, not decorative: the site leaves the whole file-key
+  # form mounted *underneath* the overlay, so "password field present" and
+  # "«Продовжити» enabled" are both true mid-processing. Without this marker
+  # the post-submit watcher mistakes work in progress for a rejected attempt.
+  #
+  # Matched by text rather than by #dimmerViewMessageLabel: the live page
+  # carries two elements with that same id ("Зчитування особистого ключа" and
+  # "Зачекайте будь ласка"), so the id identifies nothing. This text belongs to
+  # the key-reading state specifically.
+  processing:
+    strategy: text
+    value: "Зчитування особистого ключа"
+    exact: true
+    optional: true
+
+  # Password field for the MasterKey. Filled with IDGOV_SIGNING_KEY_PASSWORD, which is
+  # registered as a redaction secret and never appears in any log or artifact.
+  password:
+    strategy: label
+    value: "Пароль"
+    exact: true
+
+  submit:
+    strategy: role
+    role: button
+    name: "Продовжити"
+    exact: true
+
+  # --- ID.GOV.UA, "Перевірте дані" ---------------------------------------
+  #
+  # After the key is read, ID.GOV.UA shows the data it extracted from the
+  # certificate and asks for it to be confirmed before it hands the browser
+  # back to HSC. This is a *successful* continuation of authentication, not an
+  # error and not a screen to stop on.
+  #
+  # The confirm button, by its exact id. Measured on the live screen:
+  #   #btnAcceptUserDataAgreement  «Продовжити»   (enabled)
+  #   #btnResetUserDataAgreement   «Відмовитись»
+  #
+  # login.submit is deliberately NOT reused: both screens carry a «Продовжити»,
+  # so the accessible name identifies neither of them. The id does. Its
+  # neighbour «Відмовитись» abandons the authentication, which is why nothing
+  # here may fall back to a generic button locator or to a position.
+  user_data_accept:
+    strategy: css
+    value: '#btnAcceptUserDataAgreement'
+
+  # The heading of that screen. A second, weaker signal: the button id above is
+  # what identifies the screen and what gets clicked — this is wording, and the
+  # site owns its wording. Kept configured so `test-step` can address the screen
+  # and so a live run can note when the two disagree.
+  user_data_screen:
+    strategy: text
+    value: "Перевірте дані"
+    exact: true
+    optional: true
+
+  # --- ID.GOV.UA, rejected sign-in ---------------------------------------
+  #
+  # The message ID.GOV.UA shows when it refuses the key or the password, so a
+  # rejection fails immediately instead of waiting out the callback timeout.
+  #
+  # Still TODO **on purpose**: no real rejection has been captured yet, and a
+  # guessed wording ("Невірний пароль") would produce a detector that silently
+  # never matches while looking like it works. Until then a rejection surfaces
+  # as the callback timeout, which saves a screenshot and an element dump of
+  # the exact screen — fill this in from that evidence, not from a guess.
+  auth_error:
+    strategy: text
+    value: "TODO"
+    optional: true
+
+  # --- ID.GOV.UA, web-signature component --------------------------------
+  #
+  # Text shown when the browser signing component / extension is missing or
+  # disabled. When this matches, authentication stops with
+  # SignatureExtensionUnavailable — nothing is emulated and no other
+  # authentication method is tried instead.
+  signature_unavailable:
+    strategy: text
+    value: "TODO"
+    optional: true
+
+  # --- HSC, signed in ----------------------------------------------------
+  #
+  # Visible ONLY inside the authenticated cabinet. Together with a URL under
+  # /cabinet this is what "authenticated" means.
+  #
+  # This is the same link as queue.start_registration, on purpose: here it is
+  # only ever *read* as a marker, and queue.start_registration is the one that
+  # is clicked. Keep both in step if the site relabels it.
+  authenticated_marker:
+    strategy: role
+    role: link
+    name: "Записатись у чергу"
+    exact: true
+
+  # Something visible only on a CAPTCHA / anti-bot interstitial. When this
+  # appears the run stops and waits for you to solve it by hand.
+  challenge:
+    strategy: text
+    value: "TODO"
+    optional: true
+
+queue:
+  # The entry point into a new queue registration on /cabinet/queue.
+  start_registration:
+    strategy: role
+    role: link
+    name: "Записатись у чергу"
+    exact: true
+
+exam:
+  # "Практичний іспит"
+  practical_exam:
+    strategy: role
+    role: button
+    name: "Практичний іспит"
+    exact: true
+
+  service_center_vehicle:
+    strategy: role
+    role: button
+    name: "Практичний іспит на транспортному засобі Сервісного центру МВС"
+    exact: true
+
+category:
+  category_a:
+    strategy: role
+    role: button
+    name: "категорія А (механична КПП)"
+    exact: true
+
+department:
+  # The filter box above the service centre list. The input's DOM id is
+  # generated per render (`_r_5e_` and friends), so the placeholder is the only
+  # stable handle.
+  search:
+    strategy: placeholder
+    value: "Пошук сервісного центру МВС"
+    exact: true
+
+  # One service centre button. DYNAMIC: the value supplied at runtime is the
+  # service centre ID from service_centers.yaml (e.g. "3242"), matched as a
+  # substring of the button's accessible name — the label also carries the
+  # address, which is display text and may change.
+  #
+  # multiple: true because a substring can legitimately match several buttons;
+  # DepartmentPage then requires exactly one of them to *identify* the ID before
+  # anything is read or clicked.
+  department_card:
+    strategy: role
+    role: button
+    name: DYNAMIC
+    exact: false
+    multiple: true
+
+  # Matches EVERY service centre card — used to enumerate what is on screen.
+  # This one is expected to match many elements, hence multiple: true.
+  department_list_item:
+    strategy: css
+    value: "TODO"
+    multiple: true
+
+  # Confirm the chosen centre and move on to the calendar.
+  continue:
+    strategy: text
+    value: "TODO"
+
+calendar:
+  # --- step 3: "Оберіть дату" ---------------------------------------------
+  #
+  # The wizard step heading. Semantic on purpose: it says *which step* is on
+  # screen, which a container class name cannot, and it is what the scanner
+  # waits for after selecting a service centre.
+  ready_marker:
+    strategy: text
+    value: "Оберіть дату"
+    exact: false
+
+  # One month container. The calendar shows TWO of them side by side, and each
+  # carries its own «Місяць РІК» caption ("Серпень 2026"), so this entry is
+  # expected to match several elements — hence multiple: true.
+  #
+  # This is the one selector the calendar cannot work without, and the one that
+  # needs a real element dump: it must match the block that contains a month's
+  # caption AND its day buttons, and nothing wider. `calendar.day` below is then
+  # resolved *inside* each match, which is what keeps the "1" of September from
+  # being confused with the "1" of August. Discover it with:
+  #   python -m hsc_queue_monitor.cli test-step department.department_card --click
+  # then `inspect` on the calendar screen.
+  month:
+    strategy: css
+    value: "TODO"
+    multiple: true
+
+  # A day cell, resolved INSIDE one month container — never page-wide, because
+  # day numbers repeat between the two months on screen.
+  #
+  # Deliberately the generic `button`: the day cells are buttons, the enabled /
+  # disabled state the site renders on them is what says whether a day has
+  # capacity, and anything that is not a bare day number (arrows, weekday
+  # headers) is filtered out by its label rather than by a class name.
+  day:
+    strategy: css
+    value: "button"
+    multiple: true
+
+  # Present once the calendar has finished rendering.
+  loaded_marker:
+    strategy: css
+    value: "TODO"
+    optional: true
+
+  # A day cell that has free capacity. Expected to match many elements.
+  available_day:
+    strategy: css
+    value: "TODO"
+    multiple: true
+
+  # A bookable time slot. Expected to match many elements.
+  available_slot:
+    strategy: css
+    value: "TODO"
+    multiple: true
+
+  # Shown when the selected day/centre has nothing free.
+  no_slots:
+    strategy: text
+    value: "TODO"
+    optional: true
+
+# --- step 4: "Час" ---------------------------------------------------------
+#
+# The time step. The availability scan reads this screen and never acts on it:
+# there is no selector here for choosing a time, and none may be added — see
+# pages/time_page.py.
+time:
+  # The wizard step heading, waited for after a date is selected.
+  ready_marker:
+    strategy: text
+    value: "Час"
+    exact: true
+
+  # A time control. Generic `button` on purpose, filtered in Python by two
+  # things read off the page itself: the label is exactly a time («09:20», so a
+  # «Записатись на 09:20» button is not mistaken for one), and the control is
+  # enabled — a taken time is rendered disabled, which is the site's own answer
+  # to "is it free?".
+  slot:
+    strategy: css
+    value: "button"
+    multiple: true
+
+# The wizard's own one-step-back control, used to walk from the time screen
+# back to the calendar and from the calendar back to the service centres.
+#
+# Optional and still TODO: no dump of these screens exists yet, and a guessed
+# «Назад» would look like a working control while never matching. Until it is
+# filled in, the scanner replays the wizard from the cabinet instead — slower,
+# always correct, and it never re-authenticates.
+wizard:
+  back:
+    strategy: role
+    role: button
+    name: "TODO"
+    optional: true

@@ -1,0 +1,45 @@
+.venv/
+venv/
+.env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+build/
+dist/
+*.egg-info/
+
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Playwright profile: contains a LIVE authenticated session (cookies, tokens).
+data/browser-profile/
+data/state.json
+data/debug/
+
+# Network captures and authentication material must never be committed.
+*.har
+legacy/network-events.jsonl
+*.dat
+*.key
+*.jks
+*.p12
+*.pfx
+
+# Local logs / temp files
+*.log
+*.tmp
+*.swp
+*~
+
+.idea/
+.DS_Store
+
+# Per-machine tool settings, not project configuration.
+.claude/settings.local.json

@@ -1,0 +1,254 @@
+# Navigation semantics: WHAT steps exist and in what order.
+# WHERE the elements are lives in selectors.yaml.
+
+# Non-secret inputs to the ID.GOV.UA journey.
+#
+# key_provider is the electronic trust service provider (КНЕДП) that issued the
+# MasterKey .dat file. ID.GOV.UA defaults the dropdown to «КНЕДП ДПС» and needs
+# the right one chosen BEFORE the key is uploaded, because the provider decides
+# how the key is interpreted.
+#
+# This is configuration, not a secret (it says nothing that the key file does
+# not) and not a selector — so it lives here, never in .env or selectors.yaml.
+# It must match the option text in the dropdown exactly.
+authentication:
+  key_provider: 'КНЕДП "MASTERKEY" ТОВ "АРТ-МАСТЕР"'
+
+  # How the .dat file is handed to ID.GOV.UA.
+  #
+  #   native   drive the operating system's own Open dialog (macOS only today)
+  #   chooser  answer Playwright's intercepted file chooser
+  #
+  # `native` is production. Established by A/B test: writing the file into
+  # #PKeyFileInput and answering Playwright's FileChooser both end the same way
+  # — the site reads the key, then resets the form — while the same file picked
+  # by hand in the macOS Open panel authenticates. `chooser` is kept only so
+  # that comparison can be repeated.
+  #
+  # `native` never degrades into `chooser`: on a platform with no native
+  # implementation the run stops with a configuration error instead, because a
+  # silent substitution would fail later at the key form for no visible reason.
+  # Linux/CI support is not built yet.
+  file_selection: native
+
+  # The OS process whose file dialog is driven in `native` mode. Playwright's
+  # bundled browser runs as "Chromium"; a channel-launched Chrome is
+  # "Google Chrome".
+  browser_process: "Google Chrome for Testing"
+
+# The read-only API path's settings — timeouts, pacing, retries — now live in
+# config/app.yaml, beside every other non-sensitive operational setting.
+
+site:
+  base_url: "https://eqn.hsc.gov.ua"
+  # Every journey starts here. `open_queue` opens this, and prerequisite chains
+  # default to it.
+  cabinet_url: "https://eqn.hsc.gov.ua/cabinet"
+  # Informational only — nothing navigates here. The registration screen is
+  # reached by clicking queue.start_registration from the cabinet.
+  queue_url: "https://eqn.hsc.gov.ua/cabinet/queue"
+
+# How `test-step <selector>` reaches the screen that holds a selector.
+#
+# Keyed by SELECTOR key (as in selectors.yaml), not by the step names used in
+# flow.queue.steps below. Each entry says where to start and which selectors to
+# click on the way there.
+#
+# The prerequisite list is executed verbatim, in order — it is NOT expanded
+# transitively, so every entry must spell out its full chain. The target
+# selector itself is never clicked during preparation.
+#
+# To insert an extra screen (say a "Далі" button after the exam type), add the
+# selector to selectors.yaml and then list it here:
+#
+#   exam.continue:
+#     start_url: "https://eqn.hsc.gov.ua/cabinet"
+#     prerequisites:
+#       - queue.start_registration
+#       - exam.practical_exam
+#
+#   category.category_a:
+#     prerequisites:
+#       - queue.start_registration
+#       - exam.practical_exam
+#       - exam.continue          # <- added to the chain too
+steps:
+  # --- authentication ----------------------------------------------------
+  #
+  # These screens exist ONLY while signed out, so they start on the public
+  # home page rather than the cabinet. That also keeps them out of the reach
+  # of the automatic login guard: a cabinet start_url signs you in first,
+  # which would take the very screen you are trying to inspect away.
+  #
+  # In normal use nothing walks these chains — `ensure-auth` does the journey
+  # properly. They exist so `test-step login.password` can validate one
+  # authentication selector at a time while it is still a TODO.
+  login.terms:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites: []
+
+  login.idgov:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+
+  login.electronic_signature:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+
+  login.file_tab:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+
+  # The КНЕДП dropdown. It is never listed as a prerequisite of the entries
+  # below: prerequisites are *clicked*, and this one is chosen with
+  # select_option() during the real journey, not clicked open.
+  login.provider:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+      - login.file_tab
+
+  # The visible "choose a file" control — the production upload path. It is not
+  # listed as a prerequisite of anything: clicking it opens a file chooser, and
+  # a preparation chain has no file to answer it with.
+  login.key_file_trigger:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+      - login.file_tab
+
+  login.key_file:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+      - login.file_tab
+
+  login.password:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+      - login.file_tab
+
+  login.submit:
+    start_url: "https://eqn.hsc.gov.ua/"
+    prerequisites:
+      - login.terms
+      - login.idgov
+      - login.electronic_signature
+      - login.file_tab
+
+  # --- booking journey ---------------------------------------------------
+  queue.start_registration:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites: []
+
+  exam.practical_exam:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+
+  exam.service_center_vehicle:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+
+  category.category_a:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+
+  # Reaching the service centre screen. Confirmed against the live UI: every
+  # transition below is a card/button click — there is no "Далі" in between.
+  department.search:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+      - category.category_a
+
+  department.department_list_item:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+      - category.category_a
+
+  department.department_card:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+      - category.category_a
+
+  calendar.available_day:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+      - category.category_a
+      - department.department_card
+
+  calendar.available_slot:
+    start_url: "https://eqn.hsc.gov.ua/cabinet"
+    prerequisites:
+      - queue.start_registration
+      - exam.practical_exam
+      - exam.service_center_vehicle
+      - category.category_a
+      - department.department_card
+
+flow:
+  login:
+    enabled: true
+
+  queue:
+    # Step names must exist in the step registry (flow/steps.py).
+    # Run `python -m hsc_queue_monitor.cli steps` to list them.
+    steps:
+      - start_registration
+      - practical_exam
+      - category_a
+
+  monitor:
+    check_departments: true
+
+debug:
+  # Wait for ENTER after every flow step (same effect as running `flow`
+  # without --auto).
+  pause_after_step: false
+  # Save a screenshot after every step into data/debug/.
+  screenshots: true
+  # Also dump visible interactive elements after every step.
+  dump_elements: false
+
+timeouts:
+  # Milliseconds.
+  default_locator: 15000
+  navigation: 30000
+  # How long to wait for you to finish a manual CAPTCHA / anti-bot challenge.
+  manual_challenge: 600000
+  # How long the ID.GOV.UA callback may take to bring the browser back to HSC
+  # after the MasterKey is submitted. Signing can be slow; this is a condition
+  # poll, so a generous value costs nothing when the callback is quick.
+  authentication: 120000

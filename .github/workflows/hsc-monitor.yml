@@ -1,0 +1,87 @@
+# Scheduled availability check.
+#
+# This workflow runs the HEADLESS half of the project only: it reads the
+# encrypted HSC session from MongoDB, makes a handful of GET requests and
+# exits. It cannot authenticate and it never installs a browser.
+#
+# The runner is deliberately given the *least* it can work with:
+#
+#   HSC_MONGODB_URI              where the encrypted session lives
+#   HSC_SESSION_ENCRYPTION_KEY   what decrypts it
+#   TELEGRAM_BOT_TOKEN           the bot that sends notifications (outbound only)
+#   TELEGRAM_USERS               who receives them
+#
+# and nothing else. All four are secrets of the `production` GitHub Environment,
+# so they are granted to this job and to nothing else in the repository. The
+# MasterKey (.dat), its password and the browser profile stay on the local
+# machine, which is the only place `refresh-session` runs.
+#
+# Everything that is NOT a secret — database and collection names, timeouts,
+# the retry policy, pacing — lives in config/app.yaml, which the checkout above
+# already provides. Nothing operational is configured twice.
+#
+# When a run reports AUTH REQUIRED (exit code 3), the fix is local:
+#
+#   python -m hsc_queue_monitor.cli refresh-session
+#
+# That writes a fresh session to MongoDB and the next scheduled run picks it up
+# on its own.
+
+name: HSC availability monitor
+
+on:
+  schedule:
+    # Every five minutes. The measured queue session lives 900s, so a scan this
+    # frequent also keeps it alive — there is no separate keepalive request.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# One scan at a time, across every trigger. Two runners sharing one persisted
+# session would race each other's cookie writes; a queued run is strictly better
+# than a replaced one, so in-progress runs are never cancelled.
+concurrency:
+  group: hsc-availability-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-availability:
+    runs-on: ubuntu-latest
+    # Every secret this job uses is scoped to this environment, which can carry
+    # its own protection rules and is the only place they are defined.
+    environment: production
+    # Generous next to a normal scan (a few seconds), but finite: a 60s read
+    # plus one 120s retry across several dates must never hang a scheduled job.
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches requires-python in pyproject.toml.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the project
+        # Note what is NOT here: `playwright install`. The headless path never
+        # opens a browser, so no browser binary is ever downloaded.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Check HSC availability
+        env:
+          HSC_MONGODB_URI: ${{ secrets.HSC_MONGODB_URI }}
+          HSC_SESSION_ENCRYPTION_KEY: ${{ secrets.HSC_SESSION_ENCRYPTION_KEY }}
+          # Outbound notifications. The token IS the bot, and the recipient list
+          # is a set of personal Telegram ids — both are secrets, neither is a
+          # repository variable. With neither set the monitor does not notify.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_USERS: ${{ secrets.TELEGRAM_USERS }}
+        # One scan, then exit. The cron schedule above is the loop.
+        run: python -m hsc_queue_monitor.cli monitor-once
