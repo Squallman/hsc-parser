@@ -20,12 +20,14 @@
 # the retry policy, pacing — lives in config/app.yaml, which the checkout above
 # already provides. Nothing operational is configured twice.
 #
-# When a run reports AUTH REQUIRED (exit code 3), the fix is local:
+# When AUTH REQUIRED occurs (persisted as monitor state), the fix is local:
 #
 #   python -m hsc_queue_monitor.cli refresh-session
 #
 # That writes a fresh session to MongoDB and the next scheduled run picks it up
-# on its own.
+# on its own. The monitor-once command returns exit code 0 for all operational
+# outcomes; operational failures are signaled through persisted state and
+# Telegram notifications instead.
 
 name: HSC availability monitor
 
@@ -52,8 +54,9 @@ jobs:
     # Every secret this job uses is scoped to this environment, which can carry
     # its own protection rules and is the only place they are defined.
     environment: production
-    # Generous next to a normal scan (a few seconds), but finite: a 60s read
-    # plus one 120s retry across several dates must never hang a scheduled job.
+    # Generous next to a normal scan (a few seconds), but finite: bounded retries
+    # with exponential backoff (2s-4s) across several endpoints must never hang a
+    # scheduled job.
     timeout-minutes: 15
 
     steps:

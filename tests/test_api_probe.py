@@ -257,9 +257,9 @@ def build_config(tmp_path: Path) -> AppConfig:
         secrets=load_secrets(env_file=tmp_path / "absent.env"),
         app=AppSettings(),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(SELECTORS),
-        flow=FlowConfig.from_dict(FLOW),
         service_centers=[],
+        _selectors=SelectorRegistry.from_dict(SELECTORS),
+        _flow=FlowConfig.from_dict(FLOW),
     )
 
 

@@ -86,8 +86,8 @@ def build_config(tmp_path, flow_yaml: str = FLOW, selectors_yaml: str = SELECTOR
         secrets=load_secrets(env_file=tmp_path / "absent.env"),
         app=AppSettings(),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
-        flow=FlowConfig.from_dict(yaml.safe_load(flow_yaml)),
+        _selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
+        _flow=FlowConfig.from_dict(yaml.safe_load(flow_yaml)),
         service_centers=[],
     )
 

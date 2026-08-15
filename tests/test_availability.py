@@ -432,8 +432,8 @@ def build_config(
         secrets=load_secrets(env_file=tmp_path / "absent.env"),
         app=AppSettings(),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(yaml.safe_load(text)),
-        flow=FlowConfig.from_dict(yaml.safe_load(FLOW)),
+        _selectors=SelectorRegistry.from_dict(yaml.safe_load(text)),
+        _flow=FlowConfig.from_dict(yaml.safe_load(FLOW)),
         service_centers=[CENTRE_3242] if centres is None else centres,
     )
 

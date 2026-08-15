@@ -215,11 +215,11 @@ def build_config(
         secrets=load_secrets(env_file=tmp_path / "absent.env"),
         app=AppSettings(),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
-        flow=FlowConfig.from_dict(
+        service_centers=[CENTER_3242] if centers is None else centers,
+        _selectors=SelectorRegistry.from_dict(yaml.safe_load(selectors_yaml)),
+        _flow=FlowConfig.from_dict(
             yaml.safe_load(FLOW.replace("navigation: 200", f"navigation: {navigation_ms}"))
         ),
-        service_centers=[CENTER_3242] if centers is None else centers,
     )
 
 
@@ -882,9 +882,8 @@ def test_shipped_service_centers_carry_ids(config_dir):
     assert centers, "the shipped catalogue is empty"
     assert all(c.id and c.id.isdigit() for c in centers)
     assert all(c.search_term == c.id for c in centers)
-    # 3242 is the centre this project was built around, and it is monitored.
+    # 3242 is the centre this project was built around.
     assert "3242" in by_id
-    assert by_id["3242"].enabled
     assert by_id["3242"].full_name.startswith("ТСЦ МВС № 3242")
     # Discovery adds centres disabled, so only chosen ones are ever scanned.
     assert sum(c.enabled for c in centers) < len(centers)

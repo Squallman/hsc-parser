@@ -26,9 +26,51 @@ MIN_POLL_INTERVAL_SECONDS = 30
 #: How the MasterKey file reaches ID.GOV.UA. See AuthenticationConfig.
 FILE_SELECTION_MODES: frozenset[str] = frozenset({"native", "chooser"})
 
+
+def _find_config_dir() -> Path:
+    """Resolve config directory for both development and installed contexts.
+
+    In development: config/ is at repository root (parents[2] from src/package).
+    When installed: config/ must be provided explicitly or discovered from cwd.
+    """
+    package_root = Path(__file__).resolve().parent
+    repo_root = package_root.parent.parent
+    candidate = repo_root / "config"
+
+    # If we're in a development checkout, use repository config
+    if candidate.is_dir():
+        return candidate
+
+    # If running from an installed package, try current directory
+    cwd_config = Path.cwd() / "config"
+    if cwd_config.is_dir():
+        return cwd_config
+
+    # Fallback: use repository root if it exists (for editable installs)
+    if repo_root.name == "mreo-parser" or (repo_root.parent / "config").is_dir():
+        return repo_root / "config"
+
+    # Last resort: raise error with guidance
+    raise ConfigError(
+        f"Cannot locate config/ directory. "
+        f"Tried: {candidate}, {cwd_config}. "
+        f"When running an installed package outside the repository, "
+        f"use: python -m hsc_queue_monitor.cli --config-dir /path/to/config monitor-once"
+    )
+
+
+def _find_data_dir() -> Path:
+    """Resolve data directory (for debug artifacts, browser profile, state)."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    candidate = repo_root / "data"
+    if candidate.is_dir() or candidate.parent.is_dir():
+        return candidate
+    return Path.cwd() / "data"
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
-DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+DEFAULT_CONFIG_DIR = _find_config_dir()
+DEFAULT_DATA_DIR = _find_data_dir()
 
 
 # --------------------------------------------------------------------------- #
@@ -1096,14 +1138,38 @@ class AppConfig:
     ``flow``, ``selectors`` and ``service_centers`` come from files that are
     committed, reviewed and diffed. Nothing crosses: a credential in YAML is
     refused, and a timeout in an environment variable is not read.
+
+    Note: ``selectors`` and ``flow`` are loaded lazily on first access.
+    Headless commands (monitor-once) do not load them.
     """
 
     secrets: SecretSettings
     app: AppSettings
     paths: Paths
-    selectors: SelectorRegistry
-    flow: FlowConfig
     service_centers: list[ServiceCenter]
+    # Fields can be None when first created, but properties return non-None
+    _selectors: SelectorRegistry | None = field(default=None, init=True, repr=False)
+    _flow: FlowConfig | None = field(default=None, init=True, repr=False)
+
+    @property
+    def selectors(self) -> SelectorRegistry:
+        """Load selectors lazily only when needed (browser commands)."""
+        if self._selectors is None:
+            sel = SelectorRegistry.from_file(self.paths.config_dir / "selectors.yaml")
+            # For frozen dataclass, we must use object.__setattr__
+            object.__setattr__(self, "_selectors", sel)
+        assert self._selectors is not None
+        return self._selectors
+
+    @property
+    def flow(self) -> FlowConfig:
+        """Load flow lazily only when needed (browser commands)."""
+        if self._flow is None:
+            cfg = FlowConfig.from_file(self.paths.config_dir / "flow.yaml")
+            # For frozen dataclass, we must use object.__setattr__
+            object.__setattr__(self, "_flow", cfg)
+        assert self._flow is not None
+        return self._flow
 
     @classmethod
     def load(
@@ -1128,7 +1194,7 @@ class AppConfig:
             secrets=load_secrets(env_file=env_file),
             app=app,
             paths=paths,
-            selectors=SelectorRegistry.from_file(paths.config_dir / "selectors.yaml"),
-            flow=FlowConfig.from_file(paths.config_dir / "flow.yaml"),
             service_centers=load_service_centers(paths.service_centers_path),
+            _selectors=None,
+            _flow=None,
         )

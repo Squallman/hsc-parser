@@ -328,9 +328,9 @@ def build_context(
         # test of time.sleep. The pacing itself is asserted with a fake clock.
         app=AppSettings(api=ApiConfig(slot_request_interval_seconds=0.0)),
         paths=Paths(data_dir=tmp_path),
-        selectors=SelectorRegistry.from_dict(SELECTORS),
-        flow=FlowConfig.from_dict(FLOW),
         service_centers=[CENTRE_3242],
+        _selectors=SelectorRegistry.from_dict(SELECTORS),
+        _flow=FlowConfig.from_dict(FLOW),
     )
     ctx = FlowContext(config=config, page=page)
     auth = FakeAuth(events if events is not None else [])
