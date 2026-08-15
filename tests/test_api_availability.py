@@ -1808,10 +1808,12 @@ def test_no_internal_department_id_is_written_into_the_implementation(path):
     source = path.read_text(encoding="utf-8")
     assert not re.search(r"department_?[iI]d\s*[=:]\s*\d", source)
     assert not re.search(r"\b(2|100)\b\s*#\s*department", source)
-    # Nor is a resolved id ever written anywhere. Two modules persist at all,
-    # and neither persists a department id: session_store.py writes the cookie
-    # jar, config_init.py writes the catalogue of *visible* centre numbers.
-    if path.name not in {"session_store.py", "config_init.py"}:
+    # Nor is a resolved id ever written anywhere. Three modules persist at
+    # all, and none persists a department id: session_store.py writes the
+    # cookie jar, config_init.py writes the catalogue of *visible* centre
+    # numbers, and session_dump.py writes the opt-in diagnostic session dump
+    # (also cookies — never a department id).
+    if path.name not in {"session_store.py", "config_init.py", "session_dump.py"}:
         for persisted in ("json.dump", "write_text", "open(", "pickle"):
             assert persisted not in source
 

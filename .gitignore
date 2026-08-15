@@ -23,6 +23,11 @@ data/browser-profile/
 data/state.json
 data/debug/
 
+# refresh-session --dump-session: a plaintext copy of the authenticated
+# session (cookies, headers), opt-in and diagnostic-only. Never commit it.
+session-dump*.json
+data/session-dumps/
+
 # Network captures and authentication material must never be committed.
 *.har
 legacy/network-events.jsonl
