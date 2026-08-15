@@ -610,10 +610,16 @@ def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_the_workflow_runs_every_five_minutes(workflow):
+def test_the_workflow_has_no_schedule_trigger(workflow):
+    """Continuous monitoring is `python -m hsc_queue_monitor.cli monitor`
+    now (see `run_monitor_loop` in cli.py) — a long-running loop that waits
+    `api.monitor_interval_seconds` between scans on its own, run locally or
+    self-hosted. GitHub Actions no longer polls on a cron; it only runs this
+    workflow on demand, via `workflow_dispatch`.
+    """
     # PyYAML reads a bare `on:` key as the boolean True.
     triggers = workflow.get("on") or workflow[True]
-    assert triggers["schedule"] == [{"cron": "*/5 * * * *"}]
+    assert "schedule" not in triggers
     assert "workflow_dispatch" in triggers
 
 

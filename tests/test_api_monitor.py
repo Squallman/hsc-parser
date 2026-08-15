@@ -833,6 +833,7 @@ class ProviderWithFakeBrowser:
         fetch: Any = None,
         mints: str | None = "queue-session-NEVER-LOG-ME",
         cookies: list[dict[str, Any]] | None = None,
+        capture_browser_cookies: bool = False,
     ) -> None:
         from test_api_availability import BootstrapPage, build_context
 
@@ -846,7 +847,9 @@ class ProviderWithFakeBrowser:
         self.closed = False
         self.opens = 0
 
-        provider = BrowserSessionProvider(config, fetch=fetch)
+        provider = BrowserSessionProvider(
+            config, fetch=fetch, capture_browser_cookies=capture_browser_cookies
+        )
         provider._browser = self._browser  # type: ignore[method-assign]
         self.provider = provider
 
@@ -862,6 +865,10 @@ class ProviderWithFakeBrowser:
 
     async def create_api_session(self) -> ApiSession:
         return await self.provider.create_api_session()
+
+    @property
+    def last_browser_cookies(self) -> list[dict[str, Any]] | None:
+        return self.provider.last_browser_cookies
 
 
 async def test_the_real_provider_closes_the_browser_before_handing_over(tmp_path):

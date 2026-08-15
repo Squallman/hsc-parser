@@ -34,12 +34,16 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+import requests
 
 from .api.availability import (
     ApiSchemaUnknown,
@@ -86,12 +90,18 @@ from .api.probe import (
     render_outcome,
     resolve_url,
 )
+from .api.session_dump import (
+    SESSION_DUMP_WARNING,
+    build_session_dump,
+    write_session_dump,
+)
 from .api.session_store import (
     MongoSessionStore,
     PersistedSession,
     SessionCipher,
     SessionStore,
     cookies_from_jar,
+    mongo_payload,
     queue_expiry,
     session_from_cookies,
 )
@@ -126,8 +136,8 @@ from .notification.base import Notifier
 from .notification.console import ConsoleNotifier
 from .notification.telegram import TelegramNotifier
 
-# Aliased: the browser `monitor` command has its own, older notifier stack in
-# `notification/` (singular), and it is deliberately left alone.
+# Aliased: the browser `browser-monitor` command has its own, older notifier
+# stack in `notification/` (singular), and it is deliberately left alone.
 from .notifications.base import Notifier as OutboundNotifier
 from .notifications.dispatcher import NotificationDispatcher
 from .notifications.selftest import send_test_message
@@ -1356,17 +1366,36 @@ class BrowserSessionProvider:
     profile directory.
     """
 
-    def __init__(self, config: AppConfig, *, fetch: Fetch | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        fetch: Fetch | None = None,
+        capture_browser_cookies: bool = False,
+    ) -> None:
         self.config = config
         self.fetch = fetch
         #: Counted so the lifecycle is observable in tests and in logs.
         self.sessions_created = 0
+        #: Opt-in only: the `refresh-session --dump-session` diagnostic is the
+        #: one caller that needs the raw Playwright cookie jar, and it is the
+        #: one thing here that must never be collected by default.
+        self.capture_browser_cookies = capture_browser_cookies
+        #: Raw Playwright cookie metadata from the most recently created
+        #: session, when `capture_browser_cookies` is set. `None` otherwise —
+        #: never an empty list standing in for "not captured".
+        self.last_browser_cookies: list[dict[str, Any]] | None = None
 
     async def create_api_session(self) -> ApiSession:
         logger.info("Opening browser for HSC authentication/bootstrap")
         async with self._browser() as ctx:
             await ctx.auth.ensure_authenticated()
             bootstrap = await _bootstrap_queue_session(self.config, ctx)
+            if self.capture_browser_cookies:
+                # Read before the cookie bridge below, from the same
+                # authenticated context it draws from — the same session,
+                # inspected two ways.
+                self.last_browser_cookies = await read_browser_cookies(ctx.page)
             # After the bootstrap, so the session carries what it minted.
             client, cookies = await client_for(
                 ctx.page,
@@ -1486,6 +1515,8 @@ async def run_refresh_session(
     *,
     provider: ApiSessionProvider | None = None,
     store: SessionStore | None = None,
+    dump_session: Path | None = None,
+    overwrite_session_dump: bool = False,
 ) -> int:
     """Local only: authenticate, mint the queue session, store it, close up.
 
@@ -1495,6 +1526,11 @@ async def run_refresh_session(
     refreshed session that goes nowhere is not a refresh of anything.
 
     It reads no availability at all: no departments, no days, no slots.
+
+    ``dump_session`` is a diagnostic opt-in: when set, the exact session state
+    that gets encrypted into MongoDB is also written to that path in the
+    clear, for comparing browser/HTTP/persisted state side by side. See
+    :mod:`.api.session_dump`. Off by default, and never on by accident.
     """
     try:
         session_store = store or build_session_store(config)
@@ -1515,8 +1551,11 @@ async def run_refresh_session(
         )
 
     print("\nHSC SESSION REFRESH\n")
+    active_provider = provider or BrowserSessionProvider(
+        config, capture_browser_cookies=dump_session is not None
+    )
     try:
-        session = await (provider or BrowserSessionProvider(config)).create_api_session()
+        session = await active_provider.create_api_session()
     except HscMonitorError as exc:
         print(f"\n{type(exc).__name__}:\n{exc}\n", file=sys.stderr)
         return EXIT_RUNTIME
@@ -1543,6 +1582,11 @@ async def run_refresh_session(
     print("Session persistence: MongoDB")
 
     cookies = cookies_from_jar(session.client.session)
+    persisted = PersistedSession(
+        cookies=cookies,
+        user_agent=str(session.client.session.headers.get("User-Agent", "")),
+        queue_session_expires_at=queue_expiry(cookies),
+    )
     # Both writes happen inside this block, against the one Mongo client, and
     # the client is closed only after both. Closing between them is exactly the
     # bug this shape exists to prevent: the session lands, the state write hits
@@ -1550,13 +1594,7 @@ async def run_refresh_session(
     # AUTH_REQUIRED that nothing ever cleared.
     try:
         try:
-            session_store.save(
-                PersistedSession(
-                    cookies=cookies,
-                    user_agent=str(session.client.session.headers.get("User-Agent", "")),
-                    queue_session_expires_at=queue_expiry(cookies),
-                )
-            )
+            session_store.save(persisted)
         except HscMonitorError as exc:
             print(f"Session saved: FAILED\n\n{exc}\n", file=sys.stderr)
             return EXIT_PERSISTENCE
@@ -1592,14 +1630,57 @@ async def run_refresh_session(
     if event.changed:
         print(f"Monitor state: {event.describe()}")
 
+    if dump_session is not None:
+        code = _write_session_dump(
+            dump_session,
+            session=session.client.session,
+            persisted=persisted,
+            browser_cookies=getattr(active_provider, "last_browser_cookies", None),
+            overwrite=overwrite_session_dump,
+        )
+        if code != EXIT_OK:
+            return code
+
     print("\nBrowser closed.")
     print("Session is ready for headless monitoring.\n")
     return EXIT_OK
 
 
+def _write_session_dump(
+    path: Path,
+    *,
+    session: requests.Session,
+    persisted: PersistedSession,
+    browser_cookies: list[dict[str, Any]] | None,
+    overwrite: bool,
+) -> int:
+    """The diagnostic write for ``--dump-session``, isolated so a failure here
+    is unambiguous: the session above is already saved and ready either way,
+    and this is reported as its own outcome, not folded into that one.
+    """
+    print(f"\n{SESSION_DUMP_WARNING}\n")
+    try:
+        dump = build_session_dump(
+            session=session,
+            mongo_session_payload=mongo_payload(persisted),
+            browser_cookies=browser_cookies,
+        )
+        write_session_dump(path, dump, overwrite=overwrite)
+    except HscMonitorError as exc:
+        print(f"Session dump: FAILED\n\n{exc}\n", file=sys.stderr)
+        return EXIT_PERSISTENCE
+
+    print(f"Session dump written: {_display_path(path)}")
+    return EXIT_OK
+
+
 async def cmd_refresh_session(args: argparse.Namespace) -> int:
     # No app_session: the provider opens and closes the browser itself.
-    return await run_refresh_session(load_config(args))
+    return await run_refresh_session(
+        load_config(args),
+        dump_session=Path(args.dump_session) if args.dump_session else None,
+        overwrite_session_dump=args.overwrite_session_dump,
+    )
 
 
 def run_monitor_once(
@@ -1802,6 +1883,89 @@ def cmd_monitor_once(args: argparse.Namespace) -> int:
     )
 
 
+def _raise_keyboard_interrupt(_signum: int, _frame: Any) -> None:
+    """What SIGINT already does by default. Wiring SIGTERM to the same
+    exception means the loop below only has to know how to stop one way."""
+    raise KeyboardInterrupt
+
+
+def run_monitor_loop(
+    config: AppConfig,
+    *,
+    centers: Sequence[str] = (),
+    slot_interval: float | None = None,
+    max_dates: int = 0,
+    store: SessionStore | None = None,
+    state_store: MonitorStateStore | None = None,
+    snapshots: AvailabilitySnapshotStore | None = None,
+    fetch: Fetch | None = None,
+    notifier: OutboundNotifier | None = None,
+    emit: Callable[[str], None] = print,
+    sleep: Callable[[float], None] = time.sleep,
+    install_sigterm_handler: bool = True,
+) -> int:
+    """`monitor-once`, repeated forever with the interval from committed config.
+
+    Every iteration is exactly one call to :func:`run_monitor_once` — the same
+    function the standalone command runs — so every rule it owns (AUTH
+    REQUIRED, rate limiting, persistence failures, notification and
+    snapshot/diff behaviour, the one retry policy) stays exactly as it is.
+    This adds nothing but the wait between iterations, measured after the
+    previous one *completes*, never while one is still running: there is no
+    concurrency here to have.
+
+    The interval comes from ``api.monitor_interval_seconds`` in
+    ``config/app.yaml`` (default 300s) — already validated and defaulted at
+    config load time, so an invalid value fails startup before this is ever
+    called, with the same clear ``ConfigError`` every other command using
+    that field gets.
+
+    Ctrl+C already raises ``KeyboardInterrupt`` by Python's own default;
+    SIGTERM is wired to raise the same exception, so both shut the loop down
+    the same well-understood way, caught once, here — never classified as an
+    HSC or persistence failure, and never left for a scan to catch half-done.
+    """
+    interval = config.app.api.monitor_interval_seconds
+    previous_sigterm = signal.getsignal(signal.SIGTERM) if install_sigterm_handler else None
+    if install_sigterm_handler:
+        signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+
+    emit(f"Starting HSC monitor loop with interval {interval:g}s")
+    try:
+        while True:
+            code = run_monitor_once(
+                config,
+                centers=centers,
+                slot_interval=slot_interval,
+                max_dates=max_dates,
+                store=store,
+                state_store=state_store,
+                snapshots=snapshots,
+                fetch=fetch,
+                notifier=notifier,
+                emit=emit,
+            )
+            if code != EXIT_OK:
+                return code
+            sleep(interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if install_sigterm_handler:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+
+    emit("HSC monitor stopped")
+    return EXIT_OK
+
+
+def cmd_monitor(args: argparse.Namespace) -> int:
+    return run_monitor_loop(
+        load_config(args),
+        centers=args.centers or (),
+        slot_interval=args.slot_interval,
+    )
+
+
 async def run_api_monitor(
     config: AppConfig,
     *,
@@ -1947,7 +2111,14 @@ async def cmd_flow(args: argparse.Namespace) -> int:
     return 0
 
 
-async def cmd_monitor(args: argparse.Namespace) -> int:
+async def cmd_browser_monitor(args: argparse.Namespace) -> int:
+    """The older, local-only monitor: polls by driving the browser UI.
+
+    Renamed from `monitor` to `browser-monitor` to free that name for the
+    headless loop (`run_monitor_loop`) that repeats `monitor-once`. This
+    command, its config (`app.browser_monitor.*`) and its own notifier stack
+    are otherwise unchanged.
+    """
     async with app_session(args) as (config, ctx):
         notifiers: list[Notifier] = [ConsoleNotifier(dry_run=args.dry_run)]
 
@@ -2367,6 +2538,23 @@ def build_parser() -> argparse.ArgumentParser:
             "a scheduled `monitor-once` reports AUTH REQUIRED."
         ),
     )
+    p_refresh.add_argument(
+        "--dump-session",
+        metavar="PATH",
+        default=None,
+        help=(
+            "DIAGNOSTIC, opt-in only: after a successful refresh, also write the "
+            "complete session state (cookies, headers, browser cookie metadata, "
+            "the plaintext Mongo payload) to PATH as JSON. Never written unless "
+            "this is passed — the file grants the authenticated session to "
+            "anyone who reads it."
+        ),
+    )
+    p_refresh.add_argument(
+        "--overwrite-session-dump",
+        action="store_true",
+        help="allow --dump-session to replace an existing file at PATH",
+    )
     p_refresh.set_defaults(func=cmd_refresh_session, needs_browser=True)
 
     p_once = sub.add_parser(
@@ -2400,6 +2588,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds between slot requests (default: api.slot_request_interval_seconds)",
     )
     p_once.set_defaults(func=cmd_monitor_once, needs_browser=False)
+
+    p_monitor = sub.add_parser(
+        "monitor",
+        help="HEADLESS: run monitor-once repeatedly, no browser",
+        description=(
+            "The long-running headless loop. Each iteration is exactly the "
+            "`monitor-once` scan — same session, same retry policy, same "
+            "AUTH REQUIRED/persistence/notification/snapshot behaviour — "
+            "with no second retry layer added here. Waits "
+            "api.monitor_interval_seconds from config/app.yaml (default "
+            "300s / 5 minutes), measured after each scan completes, then "
+            "repeats. Ctrl+C (SIGINT) and SIGTERM both stop it cleanly "
+            "between iterations, never mid-scan, and exit 0."
+        ),
+    )
+    p_monitor.add_argument(
+        "--center",
+        dest="centers",
+        action="append",
+        metavar="SERVICE_CENTER_ID",
+        help=(
+            "scan this centre instead of the enabled ones in "
+            "config/service_centers.yaml; repeat for up to 5"
+        ),
+    )
+    p_monitor.add_argument(
+        "--slot-interval",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="seconds between slot requests (default: api.slot_request_interval_seconds)",
+    )
+    p_monitor.set_defaults(func=cmd_monitor, needs_browser=False)
 
     p_init = sub.add_parser(
         "init-config",
@@ -2458,12 +2679,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_flow.set_defaults(func=cmd_flow, needs_browser=True)
 
-    p_monitor = sub.add_parser("monitor", help="poll for available slots")
-    p_monitor.add_argument(
+    p_browser_monitor = sub.add_parser(
+        "browser-monitor",
+        help="LOCAL: poll for available slots by driving the browser UI (older path)",
+    )
+    p_browser_monitor.add_argument(
         "--dry-run", action="store_true", help="print notifications instead of sending them"
     )
-    p_monitor.add_argument("--once", action="store_true", help="run a single cycle and exit")
-    p_monitor.set_defaults(func=cmd_monitor, needs_browser=True)
+    p_browser_monitor.add_argument(
+        "--once", action="store_true", help="run a single cycle and exit"
+    )
+    p_browser_monitor.set_defaults(func=cmd_browser_monitor, needs_browser=True)
 
     p_sel = sub.add_parser("selectors", help="show configured and TODO selectors")
     p_sel.set_defaults(func=cmd_selectors, needs_browser=False)

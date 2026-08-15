@@ -32,10 +32,13 @@
 name: HSC availability monitor
 
 on:
-  schedule:
-    # Every five minutes. The measured queue session lives 900s, so a scan this
-    # frequent also keeps it alive — there is no separate keepalive request.
-    - cron: "*/5 * * * *"
+  # Scheduled trigger disabled: no automatic runs every five minutes.
+  # workflow_dispatch below still allows a manual run from the Actions tab.
+  # schedule:
+  #   # Every five minutes. The measured queue session lives 900s, so a scan
+  #   # this frequent also keeps it alive — there is no separate keepalive
+  #   # request.
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 # One scan at a time, across every trigger. Two runners sharing one persisted

@@ -65,6 +65,42 @@ the cookies are handed to a plain `requests` session, encrypted and written to
 MongoDB — after which Chromium is closed. Routine monitoring never needs it
 again.
 
+#### Diagnostic: dumping the raw session
+
+```bash
+python -m hsc_queue_monitor.cli refresh-session --dump-session session-dump.json
+```
+
+> **⚠️ The resulting JSON grants access equivalent to the authenticated HSC
+> session, for as long as that session remains valid.** Anyone who has it can
+> use it to act as you against HSC. Treat it like a password: never commit it,
+> never paste it anywhere, and delete it once you are done with it.
+
+`--dump-session PATH` is opt-in and off by default — a plain `refresh-session`
+never creates it. When passed, and only after authentication and the queue
+bootstrap have both succeeded, it writes a pretty-printed JSON file containing:
+
+- the browser's raw cookie jar (`browser_cookies`), exactly as Playwright
+  reports it — including `httpOnly` and `sameSite`, which `requests` does not
+  preserve;
+- the bridged `requests.Session` state (`cookies`, `headers`, `user_agent`)
+  that talks to the HSC API;
+- the exact plaintext object (`mongo_session_payload`) that gets sealed with
+  Fernet and written to MongoDB — nothing more, nothing less.
+
+It exists to answer one question during development: does anything get lost
+converting browser cookies into the HTTP session that gets persisted. It is
+useful for diagnosing why a session that looks fine in the browser reads as
+unauthenticated over the API.
+
+`--dump-session` refuses to silently overwrite a previous dump; pass
+`--overwrite-session-dump` to replace one on purpose. The file is written with
+owner-only permissions where the platform supports it (POSIX: `0600`), and
+`session-dump*.json` / `data/session-dumps/` are already in `.gitignore`. If
+the diagnostic write itself fails, `refresh-session` exits non-zero even
+though the session was refreshed successfully — it asked for the dump and
+didn't get one.
+
 ### 2. Headless monitoring
 
 ```
@@ -167,6 +203,9 @@ python -m hsc_queue_monitor.cli init-config
 
 # Run one headless availability scan (what GitHub Actions runs)
 python -m hsc_queue_monitor.cli monitor-once
+
+# Run continuously: monitor-once, wait, repeat (local/self-hosted use)
+python -m hsc_queue_monitor.cli monitor
 
 # Send one test message to every Telegram recipient
 python -m hsc_queue_monitor.cli telegram-test
@@ -283,11 +322,11 @@ environment variable is not read at all.
 | Section | What it sets |
 |---|---|
 | `mongodb:` | `database`, `session_collection` — names only, never the URI |
-| `api:` | `monitor_interval_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `slot_request_interval_seconds` |
+| `api:` | `monitor_interval_seconds` (used by `monitor` and `api-monitor`), `connect_timeout_seconds`, `read_timeout_seconds`, `slot_request_interval_seconds` |
 | `api.retry:` | `max_attempts`, `initial_backoff_seconds`, `max_backoff_seconds`, `multiplier`, `max_retry_after_seconds` |
 | `telegram:` | `enabled` — *whether* to notify (**who** is a secret) |
 | `browser:` | `headless` — overridden per run by `--headed` / `--headless` |
-| `browser_monitor:` | pacing for the older, local browser `monitor` command |
+| `browser_monitor:` | pacing for the older, local browser `browser-monitor` command |
 
 The shipped values are measured, not guessed: a 60s read budget because `/slots`
 timed out at 30s, 3s between `/slots` requests because HSC answered 429 to two
@@ -424,7 +463,7 @@ python -m hsc_queue_monitor.cli flow --auto
 And finally monitor without touching Telegram:
 
 ```bash
-python -m hsc_queue_monitor.cli monitor --dry-run
+python -m hsc_queue_monitor.cli browser-monitor --dry-run
 ```
 
 ---
@@ -458,13 +497,14 @@ Longer setup and troubleshooting guides live beside the code:
 | `check-center <id>` | Reach the service-centre screen, search one centre by ID and report whether its card is enabled; `--click` to select it and stop on the next screen |
 | `check-availability` | Scan 1–5 centres for free **dates and times**; `--center <id>` (repeatable) overrides the configured list. Reads only — books nothing |
 | `flow` | Run the configured flow step by step; `--auto`, `--from`, `--no-login` |
-| `monitor` | Poll for slots through the browser; `--dry-run`, `--once` |
+| `browser-monitor` | Poll for slots through the browser (older path); `--dry-run`, `--once` |
 | `api-probe` | DIAGNOSTIC: one direct GET against the HSC JSON API with the browser's cookies |
 | `api-observe` | DIAGNOSTIC: log the `/api/` calls the page makes while you click |
 | `api-availability` | DIAGNOSTIC: read one centre's dates and times through the API; `--open-queue`, `--max-dates`, `--slot-interval` |
 | `init-config` | Discover HSC's service centres from one departments call and write `config/service_centers.yaml`; `--dry-run`, `--force`, `--output`. New centres arrive `enabled: false` |
-| **`refresh-session`** | **LOCAL**: authenticate, mint the queue session, store it encrypted in MongoDB, close the browser |
+| **`refresh-session`** | **LOCAL**: authenticate, mint the queue session, store it encrypted in MongoDB, close the browser; `--dump-session PATH` (opt-in diagnostic, see above), `--overwrite-session-dump` |
 | **`monitor-once`** | **HEADLESS**: one availability scan from the stored session. No browser. This is what GitHub Actions runs |
+| **`monitor`** | **HEADLESS**: run `monitor-once` repeatedly, no browser. Waits `api.monitor_interval_seconds` (`config/app.yaml`, default 5 minutes) after each scan completes, then repeats; Ctrl+C/SIGTERM stop it cleanly between scans, exit 0; `--center`, `--slot-interval` |
 | `api-monitor` | Local/debug: the same headless reads, in a long-running loop; `--interval`, `--once` |
 
 Global flags: `-v/--verbose`, `--headed/--headless`, `--pwdebug`,
@@ -801,7 +841,7 @@ data/            browser profile, debug artifacts, state (all gitignored)
 
 The two Telegram packages are not a duplication to tidy away: `notifications/`
 is the headless, outbound-only path with its own boundary tests, while
-`notification/` belongs to the older local browser `monitor` command.
+`notification/` belongs to the older local browser `browser-monitor` command.
 
 ## Validation
 

@@ -126,6 +126,20 @@ def cookies_from_jar(session: requests.Session) -> tuple[Mapping[str, Any], ...]
     )
 
 
+def mongo_payload(session: PersistedSession) -> dict[str, Any]:
+    """The exact plaintext object that gets sealed with Fernet before storage.
+
+    Shared with the ``refresh-session --dump-session`` diagnostic (see
+    :mod:`.session_dump`) so the two can never drift apart: the dump always
+    shows what was actually encrypted, because it is built from a call to
+    this same function.
+    """
+    return {
+        "cookies": [dict(cookie) for cookie in session.cookies],
+        "user_agent": session.user_agent,
+    }
+
+
 def session_from_cookies(
     cookies: Iterable[Mapping[str, Any]], *, user_agent: str = ""
 ) -> requests.Session:
@@ -379,12 +393,7 @@ class MongoSessionStore:
             "_id": self.document_id,
             "version": SCHEMA_VERSION,
             # Everything sensitive lives inside this one sealed string.
-            "cookies_encrypted": self.cipher.encrypt(
-                {
-                    "cookies": [dict(cookie) for cookie in session.cookies],
-                    "user_agent": session.user_agent,
-                }
-            ),
+            "cookies_encrypted": self.cipher.encrypt(mongo_payload(session)),
             "created_at": session.created_at or moment,
             "updated_at": moment,
             "queue_session_expires_at": session.queue_session_expires_at,
