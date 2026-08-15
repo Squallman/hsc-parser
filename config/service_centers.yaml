@@ -55,7 +55,7 @@ service_centers:
   - id: "3242"
     name: "ТСЦ МВС № 3242"
     full_name: "ТСЦ МВС № 3242 м. Біла Церква, вул. Сухоярська 20"
-    enabled: true
+    enabled: false
   - id: "3243"
     name: "ТСЦ МВС № 3243"
     enabled: false
@@ -76,10 +76,10 @@ service_centers:
     enabled: false
   - id: "4641"
     name: "ТСЦ МВС № 4641"
-    enabled: false
+    enabled: true
   - id: "4651"
     name: "ТСЦ МВС № 4651"
-    enabled: false
+    enabled: true
   - id: "4841"
     name: "ТСЦ МВС № 4841 "
     enabled: false
